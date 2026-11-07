@@ -178,7 +178,7 @@ final class VoiceController: NSObject, ObservableObject {
         tearDownAudio()
         let token = listenToken
 
-        if engineChoice != .apple && recorder.duration > 0.3 {
+        if (engineChoice != .apple || CloudSTTProvider.selected != nil) && recorder.duration > 0.3 {
             transcribeWithWhisper(token: token)
             return
         }
@@ -201,9 +201,14 @@ final class VoiceController: NSObject, ObservableObject {
         Task { @MainActor [weak self] in
             var text: String?
             do {
-                text = engine == .groq
-                    ? try await GroqWhisper.transcribe(wav, language: language)
-                    : try await WhisperLocal.shared.transcribe(wav, language: language)
+                // A speech-to-text API key (Settings › Voice) wins; otherwise the chosen engine.
+                if let cloud = try await CloudSTTProvider.transcribeWithSavedSettings(wav: wav, language: language) {
+                    text = cloud
+                } else if engine == .groq {
+                    text = try await GroqWhisper.transcribe(wav, language: language)
+                } else if engine == .whisperLocal {
+                    text = try await WhisperLocal.shared.transcribe(wav, language: language)
+                }
             } catch {
                 NSLog("MacPilot: Whisper failed (\(error)); using Apple transcript")
             }
@@ -290,6 +295,18 @@ final class VoiceController: NSObject, ObservableObject {
         speakCompletion = completion
         let isHindi = plain.unicodeScalars.contains { (0x0900...0x097F).contains($0.value) } // Devanagari
         // Natural Kokoro voice for English; Apple's Hindi voice for Hindi (Kokoro can't pronounce it here).
+        // A text-to-speech API key (Settings › Voice) wins; falls back to Kokoro/Apple on error.
+        if CloudTTS.shared.speakWithSavedSettings(plain, onFinished: { finished() }, onFailed: { [weak self] err in
+            voiceLog.error("cloud TTS failed: \(err, privacy: .public)")
+            guard let self, self.speakToken == token else { return }
+            self.speakLocally(plain, isHindi: isHindi, token: token, finished: finished)
+        }) {
+            return
+        }
+        speakLocally(plain, isHindi: isHindi, token: token, finished: finished)
+    }
+
+    private func speakLocally(_ plain: String, isHindi: Bool, token: UUID, finished: @escaping @Sendable () -> Void) {
         if settings.replyVoice == .kokoro, !isHindi,
            KokoroVoice.shared.speak(plain, speed: Float(0.5 + settings.speechRate), onFinished: finished,
                                     onFailed: { [weak self] in
@@ -331,6 +348,7 @@ final class VoiceController: NSObject, ObservableObject {
         speakCompletion = nil
         isSpeaking = false
         KokoroVoice.shared.stop()
+        CloudTTS.shared.stop()
         synth.stopSpeaking(at: .immediate) // also drops queued, not-yet-started sentences
         appleCompletions.removeAll()
     }

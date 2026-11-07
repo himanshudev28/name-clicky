@@ -97,9 +97,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Load the Whisper model now so the first voice command is fast.
-        if settings.speechEngine == .whisperLocal { WhisperLocal.shared.prepare() }
+        if settings.speechEngine == .whisperLocal && settings.autoStartVoiceEngines { WhisperLocal.shared.prepare() }
         // Keep the Kokoro voice loaded so replies start speaking quickly.
-        if settings.replyVoice == .kokoro && settings.spokenReplies != .off { KokoroVoice.shared.prepare() }
+        if settings.replyVoice == .kokoro && settings.spokenReplies != .off && settings.autoStartVoiceEngines {
+            KokoroVoice.shared.prepare()
+        }
         settings.$speechEngine.dropFirst().sink { engine in
             if engine == .whisperLocal { WhisperLocal.shared.prepare() } else { WhisperLocal.shared.stop() }
         }.store(in: &cancellables)

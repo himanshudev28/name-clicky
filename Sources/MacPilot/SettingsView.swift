@@ -13,7 +13,7 @@ struct SettingsView: View {
             GeneralTab(settings: settings, onDockIconChange: onDockIconChange, onHotkeyChange: onHotkeyChange)
                 .tabItem { Label("General", systemImage: "gearshape") }
             ClaudeTab(settings: settings, session: session)
-                .tabItem { Label("Claude", systemImage: "sparkles") }
+                .tabItem { Label("AI", systemImage: "sparkles") }
             VoiceTab(settings: settings)
                 .tabItem { Label("Voice", systemImage: "waveform") }
             PermissionsTab()
@@ -80,7 +80,8 @@ private struct ClaudeTab: View {
 
     var body: some View {
         Form {
-            Section("Model") {
+            AIProviderSettingsSection()
+            Section("Claude Code model") {
                 Picker("Model", selection: $settings.model) {
                     ForEach(modelChoices, id: \.id) { Text($0.label).tag($0.id) }
                 }
@@ -160,6 +161,9 @@ private struct VoiceTab: View {
 
     var body: some View {
         Form {
+            VoiceEnginesSection(settings: settings)
+            VoiceModelsSection()
+            VoiceAPIsSection()
             Section("Speech recognition") {
                 Picker("Engine", selection: $settings.speechEngine) {
                     ForEach(SpeechEngine.allCases) { Text($0.label).tag($0) }
@@ -443,5 +447,82 @@ private struct StorageTab: View {
         p.arguments = ["-c", "sleep 1; open \"$0\"", path]
         try? p.run()
         NSApp.terminate(nil)
+    }
+}
+
+// MARK: - Voice engines (start / stop)
+
+/// Start or stop the on-device voice engines: the Whisper server (speech-to-text)
+/// and the Kokoro voice (text-to-speech, runs inside MacPilot).
+private struct VoiceEnginesSection: View {
+    @ObservedObject var settings: AppSettings
+    @State private var whisperRunning = false
+    @State private var whisperMB = 0
+    @State private var kokoroLoaded = false
+    private let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Section {
+            HStack {
+                Image(systemName: "circle.fill").font(.system(size: 8))
+                    .foregroundStyle(whisperRunning ? .green : .secondary)
+                VStack(alignment: .leading) {
+                    Text("Whisper (listening)")
+                    Text(whisperRunning ? "Running · \(whisperMB) MB memory" : "Stopped · starts by itself when you talk")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            HStack {
+                Image(systemName: "circle.fill").font(.system(size: 8))
+                    .foregroundStyle(kokoroLoaded ? .green : .secondary)
+                VStack(alignment: .leading) {
+                    Text("Kokoro voice (speaking)")
+                    Text(kokoroLoaded ? "Loaded in memory" : "Unloaded · loads by itself when MacPilot speaks")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            HStack {
+                Button("Start") {
+                    if WhisperLocal.serverBinary != nil { WhisperLocal.shared.prepare() }
+                    if KokoroVoice.isInstalled { KokoroVoice.shared.prepare() }
+                    refreshSoon()
+                }
+                .disabled(whisperRunning && kokoroLoaded)
+                Button("Stop", role: .destructive) {
+                    WhisperLocal.shared.stop()
+                    KokoroVoice.shared.unload()
+                    refreshSoon()
+                }
+                .disabled(!whisperRunning && !kokoroLoaded)
+                Spacer()
+            }
+            Toggle("Start voice engines when MacPilot opens", isOn: $settings.autoStartVoiceEngines)
+        } header: {
+            Text("Voice engines")
+        } footer: {
+            Text("Stop frees memory and CPU. Nothing is sent anywhere either way. If you talk to MacPilot while they're stopped, they start automatically (the first reply is then a second slower).")
+        }
+        .onAppear(perform: refresh)
+        .onReceive(timer) { _ in refresh() }
+    }
+
+    private func refreshSoon() { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { refresh() } }
+
+    private func refresh() {
+        whisperRunning = WhisperLocal.shared.isRunning
+        kokoroLoaded = KokoroVoice.shared.isLoaded
+        whisperMB = 0
+        if let pid = WhisperLocal.shared.pid {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/ps")
+            p.arguments = ["-o", "rss=", "-p", String(pid)]
+            let out = Pipe(); p.standardOutput = out
+            try? p.run(); p.waitUntilExit()
+            let kb = Int(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+            whisperMB = kb / 1024
+        }
     }
 }

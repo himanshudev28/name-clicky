@@ -15,6 +15,8 @@ struct ChatView: View {
     let actions: ChatActions
 
     @State private var draft = ""
+    @AppStorage("aiProvider") private var aiProvider = AIProvider.claudeCode.rawValue
+    @AppStorage("terminalAI") private var terminalAI = TerminalAI.claude.rawValue
     @State private var includeScreen = false
     @State private var hotkeyGlobal = HotkeyMonitor.hasGlobalAccess
     private let permTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
@@ -92,7 +94,36 @@ struct ChatView: View {
     }
 
     /// Native pull-down to switch model and effort right from the popup.
-    private var modelMenu: some View {
+    @ViewBuilder private var modelMenu: some View {
+        if let p = AIProvider(rawValue: aiProvider), p != .claudeCode {
+            // API key / local model: show which one; change it in Settings › AI.
+            Button { actions.openSettings() } label: {
+                Text("\(p.label.components(separatedBy: " (").first ?? p.label) · \(ProviderConfig.current().model)")
+                    .lineLimit(1)
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(.quaternary.opacity(0.7), in: Capsule())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: 170)
+            }
+            .buttonStyle(.plain)
+            .help("AI provider and model (Settings › AI)")
+        } else if let t = TerminalAI(rawValue: terminalAI), t != .claude {
+            Button { actions.openSettings() } label: {
+                Text(t.label)
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(.quaternary.opacity(0.7), in: Capsule())
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Terminal AI in use (Settings › AI)")
+        } else {
+            claudeModelMenu
+        }
+    }
+
+    private var claudeModelMenu: some View {
         Menu {
             Picker("Model", selection: $settings.model) {
                 ForEach(modelChoices, id: \.id) { Text($0.label).tag($0.id) }

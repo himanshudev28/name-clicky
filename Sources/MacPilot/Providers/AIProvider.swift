@@ -12,7 +12,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .claudeCode: return "Claude Code (your login)"
+        case .claudeCode: return "Terminal AI login (Claude Code, Codex, Gemini…)"
         case .anthropic: return "Anthropic API"
         case .openai: return "OpenAI"
         case .gemini: return "Google Gemini"

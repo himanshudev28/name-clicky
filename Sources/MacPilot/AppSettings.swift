@@ -135,6 +135,8 @@ final class AppSettings: ObservableObject {
     @Published var voiceIdentifier: String { didSet { d.set(voiceIdentifier, forKey: "voiceIdentifier") } }
     @Published var speechRate: Double { didSet { d.set(speechRate, forKey: "speechRate") } }
     @Published var replyVoice: ReplyVoice { didSet { d.set(replyVoice.rawValue, forKey: "replyVoice") } }
+    /// Load Whisper and the Kokoro voice when MacPilot opens (faster first use, uses memory).
+    @Published var autoStartVoiceEngines: Bool { didSet { d.set(autoStartVoiceEngines, forKey: "autoStartVoiceEngines") } }
     @Published var speechEngine: SpeechEngine { didSet { d.set(speechEngine.rawValue, forKey: "speechEngine") } }
     @Published var speechLanguage: SpeechLanguage { didSet { d.set(speechLanguage.rawValue, forKey: "speechLanguage") } }
     @Published var wakeWordEnabled: Bool { didSet { d.set(wakeWordEnabled, forKey: "wakeWordEnabled") } }
@@ -166,6 +168,7 @@ final class AppSettings: ObservableObject {
             "speechRate": 0.5,
             "hudPosition": HUDPosition.island.rawValue,
             "speechLanguage": SpeechLanguage.auto.rawValue,
+            "autoStartVoiceEngines": true,
             "wakeWordEnabled": false, // keeps the mic on all the time, so it's opt-in
             "wakeWord": "Clicky",
             "followUp": true,
@@ -193,6 +196,7 @@ final class AppSettings: ObservableObject {
         // Default to local Whisper when it's installed, otherwise Apple.
         let defaultEngine: SpeechEngine = (WhisperLocal.serverBinary != nil && WhisperLocal.modelPath != nil) ? .whisperLocal : .apple
         replyVoice = ReplyVoice(rawValue: d.string(forKey: "replyVoice") ?? "") ?? (KokoroVoice.isInstalled ? .kokoro : .apple)
+        autoStartVoiceEngines = d.bool(forKey: "autoStartVoiceEngines")
         speechEngine = SpeechEngine(rawValue: d.string(forKey: "speechEngine") ?? "") ?? defaultEngine
         speechLanguage = SpeechLanguage(rawValue: d.string(forKey: "speechLanguage") ?? "") ?? .auto
         wakeWordEnabled = d.bool(forKey: "wakeWordEnabled")

@@ -59,6 +59,7 @@ final class KokoroVoice: @unchecked Sendable {
     private var generate: GenerateFn?
     private var destroyAudio: DestroyAudioFn?
     private var tts: OpaquePointer?
+    private var libHandle: UnsafeMutableRawPointer?
     private var sampleRate: Double = 24_000
 
     // MARK: Playback
@@ -147,11 +148,30 @@ final class KokoroVoice: @unchecked Sendable {
         return true
     }
 
+    /// True while the voice model is loaded in memory.
+    var isLoaded: Bool { lock.lock(); defer { lock.unlock() }; return loaded }
+    private var loaded = false
+
+    /// Frees the voice model's memory (it loads again on demand or with prepare()).
+    func unload() {
+        stop()
+        queue.async {
+            guard let t = self.tts, let h = self.libHandle,
+                  let sym = dlsym(h, "SherpaOnnxDestroyOfflineTts") else { return }
+            typealias DestroyFn = @convention(c) (OpaquePointer?) -> Void
+            unsafeBitCast(sym, to: DestroyFn.self)(t)
+            self.tts = nil
+            self.lock.lock(); self.loaded = false; self.lock.unlock()
+            self.engine.stop()
+            kokoroLog.notice("unloaded")
+        }
+    }
+
     private func loadIfNeeded() -> Bool {
         if tts != nil { return true }
         if isLoadFailed { return false }
         guard let libPath = Self.libraryPath, let dir = Self.modelFolder,
-              let handle = dlopen(libPath, RTLD_NOW | RTLD_LOCAL),
+              let handle = libHandle ?? dlopen(libPath, RTLD_NOW | RTLD_LOCAL),
               let createSym = dlsym(handle, "SherpaOnnxCreateOfflineTts"),
               let genSym = dlsym(handle, "SherpaOnnxOfflineTtsGenerateWithCallbackWithArg"),
               let destroySym = dlsym(handle, "SherpaOnnxDestroyOfflineTtsGeneratedAudio"),
@@ -160,6 +180,7 @@ final class KokoroVoice: @unchecked Sendable {
             kokoroLog.error("library unavailable: \(String(cString: dlerror()), privacy: .public)")
             return false
         }
+        libHandle = handle
         let create = unsafeBitCast(createSym, to: CreateFn.self)
         generate = unsafeBitCast(genSym, to: GenerateFn.self)
         destroyAudio = unsafeBitCast(destroySym, to: DestroyAudioFn.self)
@@ -190,10 +211,11 @@ final class KokoroVoice: @unchecked Sendable {
             return false
         }
         tts = t
+        lock.lock(); loaded = true; lock.unlock()
         sampleRate = Double(unsafeBitCast(rateSym, to: SampleRateFn.self)(t))
         let fmt = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         lock.lock(); format = fmt; lock.unlock()
-        engine.attach(player)
+        if player.engine == nil { engine.attach(player) }
         engine.connect(player, to: engine.mainMixerNode, format: fmt)
         engine.prepare()
         kokoroLog.notice("loaded, sample rate \(self.sampleRate)")

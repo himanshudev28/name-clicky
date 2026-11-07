@@ -112,6 +112,8 @@ final class WhisperLocal {
 
     /// Largest-quality model present wins: large > medium > small > base > tiny.
     nonisolated static var modelPath: String? {
+        // The model picked in Settings › Voice › Voice models, if it's downloaded.
+        if let chosen = VoiceModelStore.selectedWhisperModelPath { return chosen }
         let files = (try? FileManager.default.contentsOfDirectory(atPath: modelsFolder.path)) ?? []
         let models = files.filter { $0.hasPrefix("ggml-") && $0.hasSuffix(".bin") }
         let order = ["large", "medium", "small", "base", "tiny"]
@@ -152,6 +154,9 @@ final class WhisperLocal {
         if let p = process, p.isRunning { p.terminate() }
         process = nil
     }
+
+    var isRunning: Bool { process?.isRunning ?? false }
+    var pid: Int32? { isRunning ? process?.processIdentifier : nil }
 
     func transcribe(_ wav: Data, language: SpeechLanguage) async throws -> String {
         prepare()

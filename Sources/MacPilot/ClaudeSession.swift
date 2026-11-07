@@ -44,6 +44,11 @@ final class ClaudeSession: ObservableObject {
     private var interrupting = false
     private var interruptFallback: DispatchWorkItem?
     private var lastUserPayload: String?
+    /// The built-in agent used when an API provider or local model is selected.
+    lazy var apiAgent = APIAgent(host: self)
+    /// Codex, Gemini CLI, OpenCode… (one headless run per request).
+    lazy var terminalRunner = TerminalAIRunner(host: self)
+    var apiQueue: [String] = []
     private var retriedResume = false
 
     // Streaming bookkeeping
@@ -52,6 +57,17 @@ final class ClaudeSession: ObservableObject {
     private var streamingItemIndex: [String: UUID] = [:] // "msgId#blockIndex" -> item id
 
     init() {
+        NotificationCenter.default.addObserver(forName: ProviderConfig.changedNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // Switching provider/model starts that provider's conversation fresh.
+                self.apiQueue.removeAll()
+                self.apiAgent.cancel()
+                self.apiAgent.reset()
+                self.terminalRunner.cancel()
+                if self.usesAPIProvider || self.usesOtherTerminalAI { self.stopProcess() } else { self.prewarm() }
+            }
+        }
         sessionId = UserDefaults.standard.string(forKey: "lastSessionId")
         if sessionId != nil {
             items.append(ChatItem(kind: .info, text: "Continuing your last conversation. Start a new chat any time."))
@@ -91,6 +107,14 @@ final class ClaudeSession: ObservableObject {
     private func deliver(_ text: String, context: String?) {
         var full = text
         if let context, !context.isEmpty { full = "[Context: \(context)]\n\(text)" }
+        // Your own API key or a local model: MacPilot's built-in agent instead of the Claude CLI.
+        if usesAPIProvider || usesOtherTerminalAI {
+            pendingTurns += 1
+            statusText = "Thinking…"
+            apiQueue.append(full)
+            runNextAPIRequest()
+            return
+        }
         let payload: [String: Any] = [
             "type": "user",
             "message": ["role": "user", "content": [["type": "text", "text": full]]],
@@ -122,6 +146,14 @@ final class ClaudeSession: ObservableObject {
     /// Falls back to killing the process if the CLI doesn't respond.
     func stop() {
         guard isBusy else { return }
+        if usesAPIProvider || usesOtherTerminalAI {
+            apiQueue.removeAll()
+            apiAgent.cancel()
+            terminalRunner.cancel()
+            preparing = 0
+            markStopped()
+            return
+        }
         if preparing > 0 && pendingTurns == 0 {
             generation += 1 // drops the pending screenshot send
             preparing = 0
@@ -160,6 +192,10 @@ final class ClaudeSession: ObservableObject {
     }
 
     func newChat() {
+        apiQueue.removeAll()
+        apiAgent.cancel()
+        apiAgent.reset()
+        terminalRunner.reset()
         stopProcess()
         items.removeAll()
         clearSession()
@@ -170,6 +206,7 @@ final class ClaudeSession: ObservableObject {
 
     /// Starts `claude` ahead of time so the first message doesn't wait for it to boot.
     func prewarm() {
+        guard !usesAPIProvider, !usesOtherTerminalAI else { return } // only Claude Code is kept running
         guard process == nil || runningSignature != settings.sessionSignature, pendingTurns == 0 else { return }
         stopProcess()
         _ = startProcess()
@@ -484,9 +521,10 @@ final class ClaudeSession: ObservableObject {
 
     private func startFreshIfIdle() {
         defer { lastActivity = Date() }
-        guard sessionId != nil, !isBusy, Date().timeIntervalSince(lastActivity) > idleReset else { return }
+        guard sessionId != nil || usesAPIProvider, !isBusy, Date().timeIntervalSince(lastActivity) > idleReset else { return }
         stopProcess()
         clearSession()
+        apiAgent.reset()
         items.append(ChatItem(kind: .info, text: "New conversation (MacPilot starts fresh after 30 minutes idle)."))
     }
 
@@ -547,5 +585,52 @@ enum ArgSplitter {
         }
         if has || !cur.isEmpty { out.append(cur) }
         return out
+    }
+}
+
+// MARK: - API providers (bring your own key / local models)
+
+extension ClaudeSession: AgentHost {
+    var usesAPIProvider: Bool { ProviderConfig.current().provider != .claudeCode }
+    /// A terminal AI other than Claude Code (Codex, Gemini CLI, OpenCode…).
+    var usesOtherTerminalAI: Bool { !usesAPIProvider && TerminalAI.selected != .claude }
+
+    /// Requests run one at a time, in order (like the CLI queues them).
+    func runNextAPIRequest() {
+        guard !apiAgent.isRunning, !terminalRunner.isRunning, !apiQueue.isEmpty else { return }
+        let next = apiQueue.removeFirst()
+        if usesOtherTerminalAI {
+            terminalRunner.send(next, systemPrompt: SystemPrompt.build(custom: settings.customInstructions))
+        } else {
+            let prompt = SystemPrompt.build(custom: settings.customInstructions) + "\n\n" + APIAgent.toolsAddendum
+            apiAgent.send(next, systemPrompt: prompt)
+        }
+    }
+
+    func agentAppend(_ item: ChatItem) { items.append(item) }
+
+    func agentUpdateTool(id: String, status: ChatItem.ToolStatus) {
+        if let i = items.firstIndex(where: { $0.toolUseId == id }) { items[i].toolStatus = status }
+    }
+
+    func agentStatus(_ text: String) { statusText = text }
+
+    func agentReplaceText(id: UUID, text: String) {
+        if let i = items.firstIndex(where: { $0.id == id }) { items[i].text = text }
+    }
+
+    func agentFinished(finalText: String?, error: String?) {
+        pendingTurns = max(0, pendingTurns - 1)
+        finishRunningTools(as: error == nil ? .ok : .failed)
+        if let error {
+            items.append(ChatItem(kind: .error, text: error))
+            statusText = "Error"
+        } else {
+            statusText = pendingTurns > 0 ? "Thinking…" : "Done"
+            if let t = finalText, !t.isEmpty { onTurnFinished?(t) }
+        }
+        onTurnEnded?()
+        // Let the agent finish unwinding before starting the next queued request.
+        DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.runNextAPIRequest() } }
     }
 }
