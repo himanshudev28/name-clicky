@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.macpilot.app</string>
+    <key>CFBundleName</key>
+    <string>MacPilot</string>
+    <key>CFBundleDisplayName</key>
+    <string>MacPilot</string>
+    <key>CFBundleExecutable</key>
+    <string>MacPilot</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>MacPilot listens while you hold the hotkey so you can give it instructions by voice.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>MacPilot turns your voice into text so Claude can act on it.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>MacPilot controls other apps (Finder, Chrome, System Settings and more) when you ask it to.</string>
+</dict>
+</plist>
